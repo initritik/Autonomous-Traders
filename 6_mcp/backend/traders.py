@@ -17,35 +17,65 @@ from .mcp_servers import trader_mcp_servers, researcher_mcp_servers
 
 load_dotenv(override=True)
 
-deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-google_api_key = os.getenv("GOOGLE_API_KEY")
-grok_api_key = os.getenv("GROK_API_KEY")
-openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+# ---------------------------------------------------------------------------
+# Provider API keys.
+#
+# We deliberately do NOT use a native OpenAI key/client anywhere in this
+# project. Instead we use the `openai` Python SDK purely as a generic,
+# OpenAI-compatible HTTP client, and point it at three different free/low-cost
+# providers by overriding `base_url`. Each provider (Google Gemini, DeepSeek,
+# Groq) exposes an OpenAI-compatible `/chat/completions` endpoint, so the SDK
+# (and the OpenAI Agents SDK's `OpenAIChatCompletionsModel`) work unmodified.
+# ---------------------------------------------------------------------------
+google_api_key = os.getenv("GOOGLE_API_KEY")      # Gemini API key (aistudio.google.com)
+deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")  # DeepSeek API key (platform.deepseek.com)
+groq_api_key = os.getenv("GROQ_API_KEY")          # Groq API key (console.groq.com) - free tier
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-GROK_BASE_URL = "https://api.x.ai/v1"
+# OpenAI-compatible base URLs for each provider.
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# Default / fallback model ids per provider. Gemini 3.1 Flash Lite is our
+# primary model across the codebase; DeepSeek and Groq are used to give the
+# four traders genuinely different "brains" when USE_MANY_MODELS=true.
+GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEEPSEEK_MODEL = "deepseek-chat"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 MAX_TURNS = 30
 
-openrouter_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_api_key)
-deepseek_client = AsyncOpenAI(base_url=DEEPSEEK_BASE_URL, api_key=deepseek_api_key)
-grok_client = AsyncOpenAI(base_url=GROK_BASE_URL, api_key=grok_api_key)
+# One AsyncOpenAI client per provider. Same SDK class throughout - only the
+# base_url + api_key change. This is the "openai sdk with a different
+# base_url" trick that lets any OpenAI-compatible provider stand in for
+# OpenAI itself.
 gemini_client = AsyncOpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
+deepseek_client = AsyncOpenAI(base_url=DEEPSEEK_BASE_URL, api_key=deepseek_api_key)
+groq_client = AsyncOpenAI(base_url=GROQ_BASE_URL, api_key=groq_api_key)
 
 
-def get_model(model_name: str):
-    if "/" in model_name:
-        return OpenAIChatCompletionsModel(model=model_name, openai_client=openrouter_client)
+def get_model(model_name: str) -> OpenAIChatCompletionsModel:
+    """Map a model name to the right OpenAI-compatible client.
+
+    We route purely by matching keywords in the model name, since that's all
+    the rest of the codebase (trading_floor.py) passes around. Every branch
+    returns an `OpenAIChatCompletionsModel` wired to the OpenAI SDK client for
+    that provider - there is no native OpenAI branch, by design.
+    """
+    if "gemini" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=gemini_client)
     elif "deepseek" in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=deepseek_client)
-    elif "grok" in model_name:
-        return OpenAIChatCompletionsModel(model=model_name, openai_client=grok_client)
-    elif "gemini" in model_name:
-        return OpenAIChatCompletionsModel(model=model_name, openai_client=gemini_client)
+    elif "llama" in model_name or "groq" in model_name or "gemma" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=groq_client)
     else:
-        return model_name
+        # Fail fast rather than silently falling back to a native OpenAI
+        # call we never intended to make (no OPENAI_API_KEY is configured).
+        raise ValueError(
+            f"Unrecognized model_name '{model_name}'. Expected a Gemini, "
+            "DeepSeek, or Groq model id (see GEMINI_MODEL / DEEPSEEK_MODEL / "
+            "GROQ_MODEL in traders.py)."
+        )
 
 
 async def get_researcher(mcp_servers, model_name) -> Agent:
@@ -64,7 +94,7 @@ async def get_researcher_tool(mcp_servers, model_name) -> Tool:
 
 
 class Trader:
-    def __init__(self, name: str, lastname="Trader", model_name="gpt-5.4-mini"):
+    def __init__(self, name: str, lastname="Trader", model_name=GEMINI_MODEL):
         self.name = name
         self.lastname = lastname
         self.agent = None

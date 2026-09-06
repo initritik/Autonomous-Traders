@@ -1,4 +1,4 @@
-from .traders import Trader
+from .traders import Trader, GEMINI_MODEL, DEEPSEEK_MODEL, GROQ_MODEL
 from typing import List
 import asyncio
 from .tracers import LogTracer
@@ -19,16 +19,27 @@ names = ["Warren", "George", "Ray", "Cathie"]
 lastnames = ["Patience", "Bold", "Systematic", "Crypto"]
 
 if USE_MANY_MODELS:
+    # All three providers are reached through the OpenAI SDK (see traders.py):
+    # Gemini and Groq via their OpenAI-compatible endpoints, DeepSeek likewise.
+    # We only have 3 free providers for 4 traders, so Gemini - our primary
+    # model - is doubled up (Warren and Cathie).
     model_names = [
-        "gpt-5.5",
-        "deepseek-v4-flash",
-        "gemini-3.5-flash",
-        "grok-4.3",
+        GEMINI_MODEL,    # Warren  -> Google Gemini
+        DEEPSEEK_MODEL,  # George  -> DeepSeek
+        GROQ_MODEL,      # Ray     -> Groq (Llama 3.3 70B)
+        GEMINI_MODEL,    # Cathie  -> Google Gemini
     ]
-    short_model_names = ["GPT 5.5", "DeepSeek V4", "Gemini 3.5 Flash", "Grok 4.3"]
+    short_model_names = [
+        "Gemini 3.1 Flash Lite",
+        "DeepSeek Chat",
+        "Groq Llama 3.3 70B",
+        "Gemini 3.1 Flash Lite",
+    ]
 else:
-    model_names = ["gpt-5.4-mini"] * 4
-    short_model_names = ["GPT 5.4 mini"] * 4
+    # Single-model mode: every trader runs on Gemini 3.1 Flash Lite via the
+    # OpenAI SDK pointed at Google's OpenAI-compatible base URL.
+    model_names = [GEMINI_MODEL] * 4
+    short_model_names = ["Gemini 3.1 Flash Lite"] * 4
 
 
 def create_traders() -> List[Trader]:
